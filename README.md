@@ -1,21 +1,6 @@
 # Constant propagation for a small subset of JavaScript
 
-Contents
--------------------------------------------------------------
-1. Environment
-2. Building
-3. Running
-4. Documentation
-
--------------------------------------------------------------
-
-1. Environment
--------------------------------------------------------------
-
-See js.cabal
-
-2. Building
--------------------------------------------------------------
+## Building
 
 Build and install the project:
 > make
@@ -23,8 +8,8 @@ Build and install the project:
 Clean the project
 > make clean
 
-3. Running
--------------------------------------------------------------
+## Running
+
 Example programs are located in the examples directory. 
 
 Running an example:
@@ -42,5 +27,7 @@ To run the tests:
 
 Or alternatively experiment interactively:
 > cd src
+
 > ghci Components.hs
+
 > defaultPipeline' "function id(x){return x;}id(1);id(2);"
