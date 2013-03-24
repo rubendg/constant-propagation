@@ -1,0 +1,29 @@
+imports
+{
+import qualified Data.Set as S
+import qualified Data.Map as M
+}
+
+attr JavaScript Statement Statements Expression Expressions
+  syn vars     use {`S.union`} {S.empty} :: {AVars}
+  syn envAVars use {`M.union`} {M.empty} :: {EnvAVars}
+
+sem Statement
+  | FunctionStmt lhs.envAVars = M.singleton @name ((S.fromList @params) `S.union` @stmt.vars)
+                 lhs.vars = S.empty
+
+sem VarDecl
+  | VarDecl     lhs.vars = S.singleton @name
+  | VarDeclExpr lhs.vars = S.singleton @name
+
+sem Expression
+  | VarRef      lhs.vars = S.singleton @name
+  | AssignExpr  lhs.vars = S.insert @l @r.vars
+
+
+{
+type AVars = S.Set String
+type EnvAVars = M.Map String AVars
+}
+
+

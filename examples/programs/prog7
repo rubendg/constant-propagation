@@ -1,0 +1,8 @@
+function g(x) {
+  return x;
+}
+function f(x) {
+  x = g(x);
+  return x;
+}
+x=f(2);

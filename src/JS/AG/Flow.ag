@@ -1,0 +1,308 @@
+imports
+{
+import Data.Graph.Inductive.Graph
+import Data.Graph.Inductive.Query.DFS
+import Data.Graph.Inductive.PatriciaTree
+import Text.ParserCombinators.Parsec
+import Monotone.Interface
+import Data.Either
+import Data.Maybe
+import Debug.Trace
+import qualified Data.Map as M
+}
+
+attr JavaScript 
+  syn controlFlow   :: {JSControlFlow Gr}
+  syn extremalLabel :: {Label}
+  syn env           :: {FuncEnv}
+
+attr Statement Statements VarDecl VarDecls Expression Expressions
+  chn fresh                            :: {Labels}
+
+  inh env                              :: {InternalFuncEnv}
+  inh blocks                           :: {M.Map Label Block}
+
+  syn env                              :: {InternalFuncEnv}
+  syn init                             :: {Maybe Label}  
+  syn flow   use {`S.union`} {S.empty} :: {S.Set (Either FlowEdge InterFlowEntry)}
+  syn final  use {`S.union`} {S.empty} :: {S.Set Label}
+  syn blocks use {`M.union`} {M.empty} :: {M.Map Label Block}
+
+attr Statements Statement Expression Expressions VarDecls
+  inh final :: {S.Set Label}
+
+attr Expression Expressions
+  inh assignResultTo :: {Maybe String}
+
+-- Restrictions:
+--  - all functions must be declared before use
+--  - all functions are before the first instruction
+--  - functions are not allowed to have expressions as parameters that contain function calls
+--  - the first instruction is always a skip (if it could be a function call this gives problems when running the algorithm)
+sem JavaScript
+  | Script 
+      loc.(intraflow, interflow) = partitionEithers (S.toList @stmts.flow)
+
+      -- Insert skip statement as entry point of the control flow graph.
+      -- Makes programs that have calls as first statement work, e.g. function f(){}f();
+      loc.beginSkipLbl      = head @stmts.fresh
+      loc.endSkipLbl        = head $ tail @stmts.fresh
+
+      -- take the first none function definition we encounter as the extremalLabel
+      loc.extremalLabel = extremalLbl (M.toList @stmts.blocks)
+      
+      loc.gr           = (mkGraph (M.toList @stmts.blocks) @loc.intraflow) :: IntraFlow Gr Block
+
+      loc.grWithSkip   = let withBeginSkip = insNode (@loc.beginSkipLbl, Skip @loc.beginSkipLbl) @loc.gr
+                             withEndSkip   = insNode (@loc.endSkipLbl, Skip @loc.endSkipLbl) withBeginSkip 
+                             withBeginEdge = insEdge (@loc.beginSkipLbl, @loc.extremalLabel, Left ()) withEndSkip
+                         in S.fold insEdge withBeginEdge (S.map (\final -> (final, @loc.endSkipLbl, Left ())) @stmts.final) 
+
+      lhs.extremalLabel = @loc.beginSkipLbl
+      lhs.env           = M.fromList @stmts.env
+      lhs.controlFlow   = (@loc.grWithSkip, @loc.interflow)
+
+      stmts.fresh      = [0..]
+      stmts.env        = []
+      stmts.blocks     = @stmts.blocks
+      stmts.final      = S.empty
+
+sem Statements
+  | Nil
+      lhs.init  = Nothing
+      lhs.final = @lhs.final
+  | Cons
+      lhs.init  = @hd.init
+      lhs.final = @tl.final
+      lhs.env   = @hd.env ++ @tl.env
+      lhs.flow  = 
+        let flow = @hd.flow `S.union` @tl.flow 
+        in case @tl.init of            
+            Nothing   -> flow
+            Just init -> flow `S.union` (S.map (\final -> final |-> init) @hd.final)
+
+      tl.final = @hd.final
+      tl.env   = @hd.env
+
+sem Expressions
+  | Nil
+      lhs.init  = Nothing
+      lhs.final = @lhs.final
+  | Cons
+      hd.assignResultTo = Nothing
+      tl.assignResultTo = Nothing
+
+sem VarDecls
+  | Nil
+      lhs.init  = Nothing
+      lhs.final = @lhs.final
+  | Cons
+      lhs.init  = @hd.init
+      lhs.final = @tl.final
+      lhs.flow  = 
+        let flow = @hd.flow `S.union` @tl.flow 
+        in case @tl.init of            
+            Nothing   -> flow
+            Just init -> flow `S.union` (S.map (\final -> final |-> init) @hd.final)
+
+      tl.final = @hd.final
+
+sem Statement
+  | EmptyStmt 
+      loc.lbl    = head @lhs.fresh
+
+      lhs.init   = Just @loc.lbl
+      lhs.final  = S.singleton @loc.lbl
+      lhs.blocks = M.singleton @loc.lbl (Skip @loc.lbl)
+      lhs.flow   = S.empty
+
+      lhs.fresh = tail @lhs.fresh
+  
+  | BlockStmt
+      lhs.final = @stmts.final
+      lhs.flow  = @stmts.flow
+      lhs.init  = @stmts.init
+      lhs.env   = @stmts.env
+      lhs.fresh = @stmts.fresh
+      stmts.env = @lhs.env
+
+  | ExprStmt
+      expr.assignResultTo = Nothing
+
+  | FunctionStmt 
+      loc.nLbl = head @lhs.fresh
+      loc.xLbl = head @stmt.fresh
+
+      loc.env = (@name, (@loc.nLbl, @loc.xLbl, @params)) : @lhs.env
+
+      lhs.init   = Nothing -- Just @loc.nLbl
+      lhs.final  = S.empty -- S.singleton @loc.xLbl
+      lhs.blocks = (M.fromList [(@loc.nLbl, Function @loc.nLbl @name @params), (@loc.xLbl, End @loc.xLbl)]) `M.union` @stmt.blocks
+      lhs.flow   = 
+        case @stmt.init of
+          Nothing   -> S.singleton (@loc.nLbl |-> @loc.xLbl)
+          Just init -> (S.singleton (@loc.nLbl |-> (fromJust @stmt.init))) `S.union` 
+                       @stmt.flow `S.union`
+                       S.map (\final -> final |-> @loc.xLbl) @stmt.final
+
+      lhs.env = @loc.env ++ @stmt.env
+
+      lhs.fresh = tail @stmt.fresh
+      
+      stmt.fresh = tail @lhs.fresh 
+      stmt.env   = @loc.env
+
+   | ReturnStmt
+      loc.lbl = head @lhs.fresh
+
+      lhs.init   = Just @loc.lbl
+      lhs.final  = S.singleton @loc.lbl
+      lhs.blocks = M.singleton @loc.lbl (Return @loc.lbl @expr.self)
+      lhs.flow   = let (_, (_, exit, _)) = head @lhs.env
+                   in S.singleton (@loc.lbl |-> exit)
+
+      lhs.fresh = tail @lhs.fresh
+
+   | WhileStmt
+      loc.condLbl = head @lhs.fresh
+      loc.eLbl    = head @stmt.fresh
+
+      lhs.init   = Just @loc.condLbl
+      lhs.final  = S.singleton @loc.condLbl
+      lhs.blocks = M.singleton @loc.condLbl (While @loc.condLbl @expr.self) `M.union` @stmt.blocks
+      lhs.flow = case isNothing @stmt.init of
+                  True  -> S.singleton (@loc.condLbl |-> @loc.condLbl)
+                  False -> @stmt.flow `S.union`
+                           S.singleton (@loc.condLbl |-> (fromJust @stmt.init)) `S.union`
+                           S.map (\final -> final |-> @loc.condLbl) @stmt.final
+                  
+      lhs.fresh = @stmt.fresh
+
+      stmt.fresh = tail @lhs.fresh 
+      stmt.final = S.singleton @loc.condLbl
+      
+   | IfStmt
+      loc.condLbl = head @lhs.fresh
+
+      lhs.init = Just @loc.condLbl 
+
+      lhs.final = 
+        case (S.null @stmt1.final, S.null @stmt2.final) of
+          (True,True)   -> S.singleton @loc.condLbl
+          (True,False)  -> S.singleton @loc.condLbl `S.union` @stmt2.final
+          (False,True)  -> S.singleton @loc.condLbl `S.union` @stmt1.final
+          (False,False) -> @stmt1.final `S.union` @stmt2.final  
+
+      lhs.blocks = M.singleton @loc.condLbl (If @loc.condLbl @expr.self) `M.union` @stmt1.blocks `M.union` @stmt2.blocks
+
+      lhs.flow = case (isNothing @stmt1.init, isNothing @stmt2.init) of
+                   (True,True)   -> S.empty
+                   (False,True)  -> @stmt1.flow `S.union` S.singleton (@loc.condLbl |-> (fromJust @stmt1.init)) 
+                   (True,False)  -> @stmt2.flow `S.union` S.singleton (@loc.condLbl |-> (fromJust @stmt2.init))
+                   (False,False) -> @stmt1.flow `S.union` @stmt2.flow `S.union` 
+                                    S.singleton (@loc.condLbl |-> (fromJust @stmt1.init)) `S.union` 
+                                    S.singleton (@loc.condLbl |-> (fromJust @stmt2.init))
+      
+      stmt1.fresh = tail @lhs.fresh
+      stmt2.fresh = @stmt1.fresh
+
+      stmt1.final = S.empty
+      stmt2.final = S.empty
+
+      lhs.fresh = @stmt2.fresh
+
+sem Expression 
+  | AssignExpr
+      -- | assignments can either be of the form: identifier := expression_without_calls,
+      --   or identifier := f(). In the latter case all synthesized attributes of
+      --   the f() are adopted.
+
+      loc.lbl = head @lhs.fresh
+      
+      lhs.init   = 
+        case M.null @r.blocks of 
+          True  -> Just @loc.lbl
+          False -> @r.init
+
+      lhs.final  = 
+        case M.null @r.blocks of
+          True  -> S.singleton @loc.lbl
+          False -> @r.final
+
+      lhs.blocks = 
+        case M.null @r.blocks of
+          True  -> M.singleton @loc.lbl (Assign @loc.lbl @l @r.self)
+          False -> @r.blocks
+
+      lhs.flow   = 
+        case M.null @r.blocks of
+          True  -> S.empty
+          False -> @r.flow
+
+      lhs.fresh = 
+        case M.null @r.blocks of
+          True  -> tail @lhs.fresh
+          False -> @r.fresh
+
+      r.assignResultTo = Just @l
+
+  | CallExpr   
+      loc.cLbl = head @lhs.fresh
+      loc.rLbl = head $ tail @lhs.fresh
+
+      loc.(nF, xF, _) = 
+        case lookup @name @lhs.env of
+          Just x  -> x
+          Nothing -> error ("function " ++ @name)
+  
+      lhs.init   = Just @loc.cLbl
+      lhs.final  = S.singleton @loc.rLbl
+      lhs.blocks = M.singleton @loc.cLbl (Call @loc.cLbl @loc.rLbl @name @params.self) `M.union`
+                   M.singleton @loc.rLbl (ReturnFromCall @loc.cLbl @loc.rLbl @name @params.self @lhs.assignResultTo)
+      lhs.flow   = S.singleton (Right (@loc.cLbl, @loc.nF, @loc.xF, @loc.rLbl))
+
+      lhs.fresh = drop 2 @lhs.fresh
+      
+sem VarDecl
+  | VarDecl     
+      loc.lbl = head @lhs.fresh
+      
+      lhs.init   = Just @loc.lbl
+      lhs.final  = S.singleton @loc.lbl
+      lhs.blocks = M.singleton @loc.lbl (Decl @loc.lbl @name)
+      lhs.flow   = S.empty
+
+      lhs.fresh = tail @lhs.fresh
+
+  | VarDeclExpr 
+      loc.lbl = head @lhs.fresh
+      
+      lhs.init   = Just @loc.lbl
+      lhs.final  = S.singleton @loc.lbl
+      lhs.blocks = M.singleton @loc.lbl (Assign @loc.lbl @name @expr.self)
+      lhs.flow   = S.empty
+
+      lhs.fresh = tail @lhs.fresh
+
+{
+type InternalFuncEnv = [(String,(Label, Label, [String]))]
+type FuncEnv = M.Map String (Label, Label, [String])
+type Labels = [Label]
+type Result = String
+  
+type JSControlFlow gr = FlowGraph gr Block
+
+infixr 1 |->
+(|->) :: Label -> Label -> Either FlowEdge a
+(|->) l l' = Left (l, l', Left ())
+
+extremalLbl ((_,Function _ _ _) : xs) = extremalLbl (stripUntilEnd xs)
+extremalLbl ((_,End _) : xs)          = extremalLbl xs
+extremalLbl (x:_)                     = fst x
+extremalLbl []                        = error "no extremal label"
+
+stripUntilEnd xs = 
+  let cond (_,End _) = False
+      cond _         = True
+  in dropWhile cond xs
+}

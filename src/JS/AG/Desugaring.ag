@@ -1,0 +1,82 @@
+attr JavaScript
+  syn desugared :: {Statements}
+                              
+attr Statements Statement CaseClause CaseClauses
+  syn desugared use {++} {[]} :: {Statements}
+
+attr CaseClauses Statement
+  syn fallthrough use {++} {[]} :: {Statements}
+  inh test :: {Expression}
+
+attr CaseClause
+  syn unbrokenStmts :: {Statements}
+  syn hasBreak :: {Bool}                       
+
+sem JavaScript                              
+  | Script lhs.desugared = @stmts.desugared
+
+sem Statement 
+  | EmptyStmt  lhs.desugared    = [@self]
+  | ExprStmt  lhs.desugared     = [@self]
+  | VarDeclStmt  lhs.desugared  = [@self]
+  | BreakStmt  lhs.desugared    = [@self]
+  | ContinueStmt  lhs.desugared = [@self]
+  | ReturnStmt lhs.desugared    = [@self]
+
+  | BlockStmt  lhs.desugared    = [BlockStmt @stmts.desugared]
+  | LabelledStmt  lhs.desugared = [LabelledStmt @lbl (BlockStmt @stmt.desugared)]
+  | IfStmt  lhs.desugared       = [IfStmt @expr.self (BlockStmt @stmt1.desugared) (BlockStmt @stmt2.desugared)]
+  | WhileStmt  lhs.desugared    = [WhileStmt @expr.self (BlockStmt @stmt.desugared)]
+  | FunctionStmt  lhs.desugared = [FunctionStmt @name @params (BlockStmt @stmt.desugared)]
+  | ForStmt lhs.desugared       = case @init of 
+                                         NoInit -> []
+                                         VarInit vardecls  -> [VarDeclStmt vardecls]
+                                         ExprInit expr -> [ExprStmt expr] 
+                                  ++
+                                  [WhileStmt (case @test.self of
+                                                     NoExpr -> BoolLit True
+                                                     JustExpr e -> e)
+                                             (BlockStmt (@stmt.desugared ++ (case @step.self of 
+                                                                                       NoExpr -> [] 
+                                                                                       JustExpr e -> [ExprStmt e])))]
+  
+  | SwitchStmt lhs.desugared    = case @clauses.self of 
+                                    [] -> [ExprStmt @expr.self]
+                                    _  -> @clauses.desugared
+               clauses.test     = @expr.self                   
+
+sem CaseClauses                            
+  | Cons loc.fallthrough = @hd.unbrokenStmts ++ if @hd.hasBreak
+                                                then []
+                                                else @tl.fallthrough
+         lhs.desugared   = case @hd.self of
+                            CaseDefault _ -> [BlockStmt @hd.unbrokenStmts]
+                            CaseClause test' _ -> [IfStmt (InfixExpr OpStrictEq 
+                                                                     @lhs.test 
+                                                                     (clauseExpr @hd.self)) 
+                                                          (BlockStmt @loc.fallthrough) 
+                                                          (BlockStmt @tl.desugared)]
+ 
+
+
+
+sem CaseClause
+  | *  lhs.desugared = [BlockStmt @stmts.desugared]
+       lhs.unbrokenStmts = unbrokenStmts @stmts.desugared
+       lhs.hasBreak = hasBreak @stmts.desugared 
+{
+  
+unbrokenStmts []                               = []
+unbrokenStmts ((BreakStmt _) : _)              = []
+unbrokenStmts ((BlockStmt stmts): ss)          = BlockStmt (unbrokenStmts stmts) : unbrokenStmts ss
+unbrokenStmts ((IfStmt expr stmt1 stmt2) : ss) = IfStmt expr (BlockStmt (unbrokenStmts [stmt1])) (BlockStmt (unbrokenStmts [stmt2])) : unbrokenStmts ss
+unbrokenStmts (s : ss)                         = s : unbrokenStmts ss
+
+hasBreak [] = False
+hasBreak ((BreakStmt _) : _) = True
+hasBreak ((BlockStmt stmts) : ss)      = (hasBreak stmts) || hasBreak ss
+hasBreak ((IfStmt _ stmt1 stmt2) : ss) = hasBreak [stmt1] || hasBreak [stmt2] || hasBreak ss
+hasBreak (_:ss) = hasBreak ss
+
+clauseExpr (CaseClause e _) = e
+}

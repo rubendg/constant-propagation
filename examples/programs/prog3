@@ -1,0 +1,4 @@
+function f(x) {
+  x = x + 1;
+}
+f(0);

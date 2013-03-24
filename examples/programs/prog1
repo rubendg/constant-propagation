@@ -1,0 +1,11 @@
+function f(x) {
+  if(true) {
+    return x;
+  } else {
+    return 0;
+  }
+}
+x=1;
+x=f(x);
+x=2;
+z=4;

@@ -1,0 +1,6 @@
+function f(x) {
+  while(x < 4) {
+    return x + 1;
+  }
+}
+x=f(2);

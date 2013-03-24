@@ -1,0 +1,272 @@
+imports
+{
+import JS.Analysis.CP.Base
+import qualified Data.Graph.Inductive.Graph
+}
+
+attr Block Blocks Expression Expressions VarDecl VarDecls MExpression MExpressions
+  inh analyseData :: {[(Int,[Int],String,ZTB)]} -- propogates the analysis information down through the tree
+
+attr Expression Expressions MExpression MExpressions VarDecl VarDecls
+  inh currLabel :: {Int} -- is used to search the value of variables in the CP-analysis data
+
+attr Block 
+  syn folded :: {Block} -- contains the folded-version of the block and passes it up the tree
+  
+attr Expression
+  syn folded :: {Expression}
+  syn value  :: {ExprValue} -- contains the value of an expression and passes it up the tree
+
+attr MExpression 
+  syn folded :: {MExpression}
+
+attr VarDecl
+  syn folded :: {VarDecl}
+
+attr Blocks 
+  syn folded :: {Blocks}
+
+attr Expressions
+  syn folded :: {Expressions}
+  
+attr MExpressions
+  syn folded :: {MExpressions}
+
+attr VarDecls
+  syn folded :: {VarDecls}
+
+sem Blocks
+  | Nil         lhs.folded = []
+  | Cons        lhs.folded = @hd.folded : @tl.folded
+                hd.analyseData = @lhs.analyseData
+                tl.analyseData = @lhs.analyseData
+                
+sem Expressions
+  | Nil         lhs.folded = []
+  | Cons        lhs.folded = @hd.folded : @tl.folded
+                hd.analyseData = @lhs.analyseData
+                tl.analyseData = @lhs.analyseData
+                hd.currLabel = @lhs.currLabel
+                tl.currLabel = @lhs.currLabel
+
+sem MExpressions
+  | Nil         lhs.folded = []
+  | Cons        lhs.folded = @hd.folded : @tl.folded
+                hd.analyseData = @lhs.analyseData
+                tl.analyseData = @lhs.analyseData
+                hd.currLabel = @lhs.currLabel
+                tl.currLabel = @lhs.currLabel               
+                
+sem VarDecls
+  | Nil         lhs.folded = []
+  | Cons        lhs.folded = @hd.folded : @tl.folded
+                hd.analyseData = @lhs.analyseData
+                tl.analyseData = @lhs.analyseData
+                hd.currLabel = @lhs.currLabel
+                tl.currLabel = @lhs.currLabel                
+                
+sem Block
+  | Skip lhs.folded = @self
+  
+  | Decl lhs.folded = @self
+  
+  | Call lhs.folded = Call @lbl1 @lbl2 @name @params.folded
+         params.analyseData = @lhs.analyseData
+         params.currLabel = @lbl1
+  
+  | Assign lhs.folded = Assign @lbl @name @expr.folded
+           expr.analyseData = @lhs.analyseData
+           expr.currLabel = @lbl
+  
+  | Return lhs.folded = Return @lbl @expr.folded
+           expr.analyseData = @lhs.analyseData
+           expr.currLabel = @lbl
+  
+  | ReturnFromCall lhs.folded = ReturnFromCall @lbl1 @lbl2 @name @params.folded @res.self
+                   params.analyseData = @lhs.analyseData
+                   params.currLabel = @lbl1
+  
+  | While lhs.folded = While @lbl @expr.folded
+          expr.analyseData = @lhs.analyseData
+          expr.currLabel = @lbl
+  
+  | If lhs.folded = If @lbl @expr.folded
+       expr.analyseData = @lhs.analyseData
+       expr.currLabel = @lbl
+  
+  | Function lhs.folded = @self
+  
+  | End lhs.folded = @self
+
+sem Expression 
+  | StringLit lhs.folded = @self
+              lhs.value = S @val
+              loc.analyseData = @lhs.analyseData
+                            
+  | NumLit lhs.folded = @self
+           lhs.value = D @val
+           loc.analyseData = @lhs.analyseData
+  
+  | IntLit lhs.folded = @self
+           lhs.value  = I @val
+           loc.analyseData = @lhs.analyseData
+  
+  | BoolLit lhs.folded = @self
+            lhs.value = B @val
+            loc.analyseData = @lhs.analyseData
+  
+  | NullLit lhs.folded = @self
+            lhs.value = N
+            loc.analyseData = @lhs.analyseData
+  
+  | VarRef lhs.folded = case @loc.value of
+                          (S n) -> @self
+                          (I x) -> IntLit x
+          
+           -- search the variable in the CP analysis data for this programpoint and see it is constant or Top or Bottom
+           loc.value = case searchEnv @name @lhs.currLabel @lhs.analyseData of
+                             Just v ->  case v of
+                                          Bottom -> error $ "use of uninitialised variable " ++ @name ++ " (stmt-label: " ++ show @lhs.currLabel ++ ")"
+                                          Top    -> S @name
+                                          Z x    -> I x
+                             Nothing -> S @name
+           
+           lhs.value = @loc.value
+           loc.analyseData = @lhs.analyseData
+  
+  | AssignExpr lhs.folded = AssignExpr @l @r.folded
+               r.analyseData = @lhs.analyseData
+               lhs.value = E $ AssignExpr @l @r.folded
+               
+  | ListExpr lhs.folded = ListExpr @exprs.folded
+             exprs.analyseData = @lhs.analyseData
+             lhs.value  = E $ ListExpr @exprs.folded
+             
+  | CondExpr lhs.folded = CondExpr @expr1.folded @expr2.folded @expr3.folded
+             expr1.analyseData = @lhs.analyseData
+             expr2.analyseData = @lhs.analyseData
+             expr3.analyseData = @lhs.analyseData
+             lhs.value = E $ CondExpr @expr1.folded @expr2.folded @expr3.folded
+             
+  | InfixExpr lhs.folded = case @loc.value of
+                             (I x) -> IntLit x
+                             (D x) -> NumLit x
+                             (B x) -> BoolLit x
+                             (S x) -> StringLit x
+                             (E x) -> x
+                             
+              expr1.analyseData = @lhs.analyseData             
+              expr2.analyseData = @lhs.analyseData
+              
+              loc.value = case (tyOf @expr1.value,tyOf @expr2.value) of
+                          -- if both types of the sub-expressions are of type Int we can use the following infix-operators
+                          (TI,TI) -> case @op.self of
+                                       OpAdd -> I $ (extractI @expr1.value) + (extractI @expr2.value)
+                                       OpMul -> I $ (extractI @expr1.value) * (extractI @expr2.value)
+                                       OpSub -> I $ (extractI @expr1.value) - (extractI @expr2.value)
+                                       OpLT  -> B $ (extractI @expr1.value) < (extractI @expr2.value)
+                                       OpLEq -> B $ (extractI @expr1.value) <= (extractI @expr2.value)
+                                       OpGT  -> B $ (extractI @expr1.value) > (extractI @expr2.value)
+                                       OpGEq -> B $ (extractI @expr1.value) >= (extractI @expr2.value)
+                                       OpEq  -> B $ (extractI @expr1.value) == (extractI @expr2.value)
+                                       OpNEq -> B $ not $ (extractI @expr1.value) == (extractI @expr2.value)                                     
+                                       _     -> error "not yet supported"
+                          -- if both types of the sub-expressions are of type Double we can use the following infix-operators
+                          (TD,TD) -> case @op.self of
+                                       OpAdd -> D $ (extractD @expr1.value) + (extractD @expr2.value)
+                                       OpMul -> D $ (extractD @expr1.value) * (extractD @expr2.value)
+                                       OpSub -> D $ (extractD @expr1.value) - (extractD @expr2.value)
+                                       OpDiv -> D $ (extractD @expr1.value) / (extractD @expr2.value)
+                                       OpLT  -> B $ (extractD @expr1.value) < (extractD @expr2.value)
+                                       OpLEq -> B $ (extractD @expr1.value) <= (extractD @expr2.value)
+                                       OpGT  -> B $ (extractD @expr1.value) > (extractD @expr2.value)
+                                       OpGEq -> B $ (extractD @expr1.value) >= (extractD @expr2.value)
+                                       OpEq  -> B $ (extractD @expr1.value) == (extractD @expr2.value)
+                                       OpNEq -> B $ not $ (extractD @expr1.value) == (extractD @expr2.value)                                     
+                                       _     -> error "not yet supported"                                      
+                          -- if both types of the sub-expressions are of type Boolean we can use the following infix-operators
+                          (TB,TB) -> case @op.self of
+                                       OpLT  -> B $ (extractB @expr1.value) < (extractB @expr2.value)
+                                       OpLEq -> B $ (extractB @expr1.value) <= (extractB @expr2.value)
+                                       OpGT  -> B $ (extractB @expr1.value) > (extractB @expr2.value)
+                                       OpGEq -> B $ (extractB @expr1.value) >= (extractB @expr2.value)
+                                       OpEq  -> B $ (extractB @expr1.value) == (extractB @expr2.value)
+                                       OpNEq -> B $ not $ (extractB @expr1.value) == (extractB @expr2.value)                                     
+                                       _     -> error "not yet supported"    
+                          -- if both types of the sub-expressions are of type String we can use the following infix-operators
+                          (TS,TS) -> case @op.self of
+                                       OpLT  -> B $ (extractS @expr1.value) < (extractS @expr2.value)
+                                       OpLEq -> B $ (extractS @expr1.value) <= (extractS @expr2.value)
+                                       OpGT  -> B $ (extractS @expr1.value) > (extractS @expr2.value)
+                                       OpGEq -> B $ (extractS @expr1.value) >= (extractS @expr2.value)
+                                       OpEq  -> B $ (extractS @expr1.value) == (extractS @expr2.value)
+                                       OpNEq -> B $ not $ (extractS @expr1.value) == (extractS @expr2.value)                                     
+                                       _     -> error "not yet supported"  
+                          -- In any other case don't evaluate the expression, just return the expression itself
+                          (_,_)   -> E @self
+                          
+              lhs.value = @loc.value          
+                        
+  | UnaryAssignExpr lhs.folded = @self
+                    loc.analyseData = @lhs.analyseData
+                    lhs.value = E @self
+  
+  | PrefixExpr lhs.folded = PrefixExpr @op.self @expr.folded
+               expr.analyseData = @lhs.analyseData
+               lhs.value = E @self
+               
+  | CallExpr lhs.folded = CallExpr @name @params.folded
+             params.analyseData = @lhs.analyseData
+             lhs.value = E $ CallExpr @name @params.folded
+
+  | ReturnFromCallExpr lhs.folded = ReturnFromCallExpr @name @params.folded
+                       params.analyseData = @lhs.analyseData
+                       lhs.value = E $ ReturnFromCallExpr @name @params.folded
+
+sem MExpression
+  | NoExpr lhs.folded = @self
+  | JustExpr lhs.folded = JustExpr @expr.folded
+             expr.analyseData = @lhs.analyseData
+             expr.currLabel = @lhs.currLabel
+  
+sem VarDecl
+  | VarDecl lhs.folded = @self
+            loc.analyseData = @lhs.analyseData
+  | VarDeclExpr lhs.folded = VarDeclExpr @name @expr.folded
+                expr.analyseData = @lhs.analyseData
+  
+{ 
+-- search a (string,label) combo in the environment that represents the constant propagation analysis data represented as (label,var-name,value)
+searchEnv :: String -> Int -> [(Int,[Int],String,ZTB)] -> Maybe ZTB
+searchEnv _ _ []                              = Nothing
+searchEnv s i ((l,c,k,v):ls) | i == l && k == s = Just v
+                             | otherwise        = searchEnv s i ls                         
+
+-- determines the type of an expression value (Int, double, boolean, string, expression, null)
+tyOf :: ExprValue -> ExprType
+tyOf (I _) = TI
+tyOf (D _) = TD
+tyOf (B _) = TB
+tyOf (S _) = TS
+tyOf (E _) = TE
+tyOf (N  ) = TN
+
+-- extraction functions that extracts the real value of an expression out of an ExprValue wrapper
+extractI :: ExprValue -> Int
+extractI (I x) = x
+extractI s     = error $ "extraction of Int not possible for type " ++ show (tyOf s)
+
+extractD :: ExprValue -> Double
+extractD (D x) = x
+extractD s     = error $ "extraction of Double not possible for type " ++ show (tyOf s)
+
+extractB :: ExprValue -> Bool
+extractB (B x) = x
+extractB s     = error $ "extraction of Bool not possible for type " ++ show (tyOf s)
+
+extractS :: ExprValue -> String
+extractS (S x) = x
+extractS s     = error $ "extraction of String not possible for type " ++ show (tyOf s)
+}
+
+

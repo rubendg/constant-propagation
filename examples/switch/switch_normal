@@ -1,0 +1,11 @@
+switch (x) {
+       case 100:
+            y=100;
+            break;
+       case 101:
+            y=101;
+            break;
+       case 102:
+            y=102;
+            break;
+}

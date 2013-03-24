@@ -1,0 +1,16 @@
+switch (x) {
+       case 100:
+            y=100;
+            break;
+       case 101:
+            y=101;
+       case 102:
+            for (x=100;x<1000;x=x+1) {
+                y=5;
+                }
+            y=102;
+       default:
+            y=103;
+            break;
+            y=104;
+}

@@ -1,0 +1,4 @@
+function id(x) {
+  return x;
+}
+x=id(0);

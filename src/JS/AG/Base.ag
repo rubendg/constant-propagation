@@ -1,0 +1,150 @@
+data JavaScript
+  | Script stmts :: Statements
+
+data Statement
+  | EmptyStmt
+  | BlockStmt stmts :: Statements
+  | ExprStmt expr :: Expression
+  | VarDeclStmt decls :: VarDecls
+  | BreakStmt lbl :: MBreakCon
+  | ContinueStmt lbl :: MBreakCon
+  | LabelledStmt lbl :: MBreakCon stmt :: Statement
+  | IfStmt expr :: Expression stmt1 :: Statement stmt2 :: Statement
+  | WhileStmt expr :: Expression stmt :: Statement
+  | ForStmt init :: ForInit test :: MExpression step :: MExpression stmt :: Statement
+  | SwitchStmt expr :: Expression clauses :: CaseClauses
+  | FunctionStmt name :: {String} params :: {[String]} stmt :: Statement
+  | ReturnStmt expr :: MExpression 
+  | ParamStmt name :: {String} expr :: Expression
+
+data VarDecl 
+  | VarDecl name :: String
+  | VarDeclExpr name :: String expr :: Expression
+  
+data Expression
+  | StringLit val :: {String}
+  | NumLit val :: {Double}
+  | IntLit val :: {Int}
+  | BoolLit val :: {Bool}
+  | NullLit
+  | VarRef name :: String
+  | AssignExpr l :: String r :: Expression
+  {- 
+    Multiple comma separated expressions. The spec prescribes Expression* , AssignmentExpression.
+    But the parser also parses Expression*.
+  -}
+  | ListExpr exprs :: Expressions
+  | CondExpr expr1 :: Expression expr2 :: Expression expr3 :: Expression
+  | InfixExpr op :: InfixOp expr1 :: Expression expr2 :: Expression
+  | UnaryAssignExpr op :: UnaryAssignOp val :: LValue
+  | PrefixExpr op :: PrefixOp expr :: Expression
+  | CallExpr name :: {String} params :: Expressions
+  | ReturnFromCallExpr name :: {String} params :: Expressions
+
+data LValue
+  | LVar name :: {String}
+
+data AssignOp
+  | OpAssign 
+  | OpAssignAdd 
+  | OpAssignSub 
+  | OpAssignMul 
+  | OpAssignDiv
+  | OpAssignMod 
+  | OpAssignLShift 
+  | OpAssignSpRShift 
+  | OpAssignZfRShift
+  | OpAssignBAnd 
+  | OpAssignBXor 
+  | OpAssignBOr
+
+data InfixOp 
+  | OpLT 
+  | OpLEq 
+  | OpGT 
+  | OpGEq  
+  | OpEq 
+  | OpNEq
+  | OpStrictEq 
+  | OpStrictNEq 
+  | OpLAnd 
+  | OpLOr 
+  | OpMul 
+  | OpDiv 
+  | OpMod  
+  | OpSub 
+  | OpLShift 
+  | OpSpRShift
+  | OpZfRShift 
+  | OpBAnd 
+  | OpBXor 
+  | OpBOr 
+  | OpAdd
+
+data PrefixOp
+  | PrefixLNot 
+  | PrefixBNot 
+  | PrefixPlus
+  | PrefixMinus
+
+data UnaryAssignOp
+  | PrefixInc 
+  | PrefixDec 
+  | PostfixInc 
+  | PostfixDec
+
+data CaseClause
+  | CaseClause expr :: Expression stmts :: Statements
+  | CaseDefault stmts :: Statements
+
+data Block  
+  | Skip lbl :: {Label}
+  | Decl lbl :: {Label} val :: {String}
+  | Call lbl1 :: {Label} lbl2 :: {Label} name :: {String} params :: Expressions
+  | Assign lbl :: {Label} name :: {String} expr :: Expression
+  | Return lbl :: {Label} expr :: MExpression
+  | ReturnFromCall lbl1 :: {Label} lbl2 :: {Label} name :: {String} params :: Expressions res :: MResult
+  | While lbl :: {Label} expr :: Expression
+  | If lbl :: {Label} expr :: Expression
+  | Function lbl :: {Label} name :: {String} params :: {[String]}
+  | End lbl :: {Label}
+
+data MExpression
+  | NoExpr
+  | JustExpr expr :: Expression
+  
+type Statements = [Statement]
+type VarDecls = [VarDecl]
+type Expressions = [Expression]
+type MExpressions = [MExpression]
+type MBreakCon = (Maybe String)
+type CaseClauses = [CaseClause]
+type MResult = (Maybe Result)
+type Blocks = [Block]
+
+{
+
+
+data ForInit = NoInit
+             | VarInit VarDecls
+             | ExprInit Expression
+  deriving Show
+
+data ExprValue = I Int | D Double | B Bool | S String | E Expression | N
+
+data ExprType = TI | TD | TB | TS | TE | TN
+
+deriving instance Show Block
+deriving instance Show JavaScript
+deriving instance Show Statement
+deriving instance Show Expression
+deriving instance Show MExpression
+deriving instance Show LValue
+deriving instance Show VarDecl
+deriving instance Show AssignOp
+deriving instance Show UnaryAssignOp
+deriving instance Show PrefixOp
+deriving instance Show InfixOp
+deriving instance Show ExprType
+deriving instance Show CaseClause
+}

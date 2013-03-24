@@ -1,0 +1,38 @@
+imports
+{
+import Data.List as L
+}
+
+attr Block
+  syn recon     :: {Statement}
+  
+attr Blocks
+  syn recon     :: {Statements} 
+  
+attr Blocks
+  syn funcStmtsList :: {[Statements]}
+
+attr Block Blocks
+  inh funcStmts :: {Statements}
+
+sem Blocks
+  | Nil  loc.recon = []
+         lhs.funcStmtsList = [[]]
+  | Cons loc.recon = @hd.recon : @tl.recon
+         lhs.funcStmtsList = case @hd.self of
+                                End _ -> [] : @tl.funcStmtsList
+                                Function _ _ _ -> tail @tl.funcStmtsList
+                                _ -> (@hd.recon : head @tl.funcStmtsList) : tail @tl.funcStmtsList
+         hd.funcStmts = head @tl.funcStmtsList
+         
+sem Block
+  | Skip           loc.recon = BreakStmt (Just "skip")
+  | Decl           loc.recon = VarDeclStmt [VarDecl @val]
+  | Call           loc.recon = ExprStmt (CallExpr @name @params.self)
+  | Assign         loc.recon = ExprStmt (AssignExpr @name @expr.self)
+  | Return         loc.recon = ReturnStmt @expr 
+  | ReturnFromCall loc.recon = BreakStmt (Just "returnFrom")
+  | While          loc.recon = WhileStmt @expr.self $ BreakStmt (Just "while")
+  | If             loc.recon = IfStmt @expr.self (BreakStmt (Just "if branch")) (BreakStmt (Just "else branch"))
+  | Function       loc.recon = FunctionStmt @name @params (BlockStmt @lhs.funcStmts)
+  | End            loc.recon = EmptyStmt
